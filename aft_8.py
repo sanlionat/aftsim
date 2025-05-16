@@ -26,7 +26,7 @@ symbols_weights = {
     "QCOM": 4.83,
     "TSLA": 4.79,
     "TSM": 4.85,
-    "SMSN.L": 4.91
+    "005930.KQ": 4.91
 }
 
 # Fonksiyon: TR saatine göre önceki 18:00
