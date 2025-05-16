@@ -1,10 +1,11 @@
-import yfinance as yf
-import pandas as pd
-from datetime import datetime, timedelta, timezone
 import streamlit as st
-import io
+import pandas as pd
+import yfinance as yf
+from datetime import datetime, timedelta, timezone
 
-# AFT portfoyundeki hisseler ve agirliklar (%):
+st.set_page_config(page_title="AFT Fon Simülasyonu", layout="centered")
+st.title("AFT Fon Getiri Simülasyonu")
+
 symbols_weights = {
     "AAPL": 4.86,
     "ADBE": 4.83,
@@ -28,46 +29,53 @@ symbols_weights = {
     "SMSN.L": 4.91
 }
 
-st.set_page_config(page_title="AFT Fon Simülasyonu", layout="centered")
-st.title("📊 AFT Fon Anlık Getiri Simülasyonu")
+# Fonksiyon: TR saatine göre önceki 18:00
+def round_to_prev_18(dt):
+    dt_tr = dt.astimezone(timezone(timedelta(hours=3)))
+    if dt_tr.hour >= 18:
+        return dt_tr.replace(hour=18, minute=0, second=0, microsecond=0)
+    else:
+        return (dt_tr - timedelta(days=1)).replace(hour=18, minute=0, second=0, microsecond=0)
 
+now = datetime.now(timezone.utc)
+def_end_dt = round_to_prev_18(now)
+def_start_dt = def_end_dt - timedelta(days=1)
+
+# Başlangıç zamanı girişleri
+st.subheader("Zaman Aralığı Seçimi")
 col1, col2 = st.columns(2)
 
 with col1:
-    start_date = st.date_input("Başlangıç Tarihi", value=datetime.today() - timedelta(days=1))
-    start_time = st.time_input("Başlangıç Saati", value=datetime.now().replace(hour=18, minute=0).time())
+    start_date = st.date_input("Başlangıç Tarihi", def_start_dt.date())
+    start_hour = st.number_input("Başlangıç Saati", min_value=0, max_value=23, value=def_start_dt.hour)
+    start_minute = st.number_input("Başlangıç Dakikası", min_value=0, max_value=59, value=def_start_dt.minute)
 
 with col2:
-    end_date = st.date_input("Bitiş Tarihi", value=datetime.today())
-    end_time = st.time_input("Bitiş Saati", value=datetime.now().time())
+    end_date = st.date_input("Bitiş Tarihi", def_end_dt.date())
+    end_hour = st.number_input("Bitiş Saati", min_value=0, max_value=23, value=def_end_dt.hour)
+    end_minute = st.number_input("Bitiş Dakikası", min_value=0, max_value=59, value=def_end_dt.minute)
 
-def get_usdtry_values(start_dt_utc, end_dt_utc):
+start_dt = datetime.combine(start_date, datetime.min.time()).replace(hour=start_hour, minute=start_minute, tzinfo=timezone(timedelta(hours=3))).astimezone(timezone.utc)
+end_dt = datetime.combine(end_date, datetime.min.time()).replace(hour=end_hour, minute=end_minute, tzinfo=timezone(timedelta(hours=3))).astimezone(timezone.utc)
+
+# Fonksiyon: USD/TRY kuru alımı
+def get_usdtry_rate(dt):
     usdtry = yf.Ticker("USDTRY=X")
-    start_df = usdtry.history(start=start_dt_utc, end=start_dt_utc + timedelta(days=1), interval="1d")
-    end_df = usdtry.history(start=end_dt_utc, end=end_dt_utc + timedelta(days=1), interval="1d")
-    if start_df.empty or end_df.empty:
-        return 0, None, None
-    start_val = start_df.iloc[0]["Close"]
-    end_val = end_df.iloc[-1]["Close"]
-    change_pct = ((end_val - start_val) / start_val) * 100
-    return change_pct, start_val, end_val
+    df = usdtry.history(start=dt, end=dt + timedelta(days=1), interval="1d")
+    if df.empty:
+        return None
+    return df.iloc[0]["Close"]
 
-def run_simulation():
-    start_dt_tr = datetime.combine(start_date, start_time).replace(tzinfo=timezone(timedelta(hours=3)))
-    end_dt_tr = datetime.combine(end_date, end_time).replace(tzinfo=timezone(timedelta(hours=3)))
-    start_dt_utc = start_dt_tr.astimezone(timezone.utc)
-    end_dt_utc = end_dt_tr.astimezone(timezone.utc)
+if st.button("Simülasyonu Başlat"):
+    st.info(f"Başlangıç: {start_dt.astimezone(timezone(timedelta(hours=3)))} → Bitiş: {end_dt.astimezone(timezone(timedelta(hours=3)))})")
 
-    usd_tl_change, usdtry_start, usdtry_end = get_usdtry_values(start_dt_utc, end_dt_utc)
-    start_str = f"{usdtry_start:.2f}" if isinstance(usdtry_start, float) else "-"
-    end_str = f"{usdtry_end:.2f}" if isinstance(usdtry_end, float) else "-"
+    usdtry_start = get_usdtry_rate(start_dt)
+    usdtry_end = get_usdtry_rate(end_dt)
+    usd_tl_change = ((usdtry_end - usdtry_start) / usdtry_start * 100) if usdtry_start and usdtry_end else 0
 
-    st.markdown(f"""
-    ### Zaman Aralığı
-    **{start_dt_tr.strftime('%Y-%m-%d %H:%M')}** → **{end_dt_tr.strftime('%Y-%m-%d %H:%M')}**
-    
-    💱 USD/TRY Kur (Başlangıç): `{start_str}` | USD/TRY Kur (Bitiş): `{end_str}`
-    """)
+    start_str = f"{usdtry_start:.2f}" if usdtry_start else "-"
+    end_str = f"{usdtry_end:.2f}" if usdtry_end else "-"
+    st.write(f"💱 USD/TRY Kur (Başlangıç): {start_str} | USD/TRY Kur (Bitiş): {end_str}")
 
     total_contribution_usd = 0
     results = []
@@ -75,19 +83,22 @@ def run_simulation():
     for symbol, weight in symbols_weights.items():
         try:
             interval = "1m"
-            max_minutes = (end_dt_utc - start_dt_utc).total_seconds() / 60
+            max_minutes = (end_dt - start_dt).total_seconds() / 60
             if max_minutes > 7 * 24 * 60:
                 interval = "5m" if max_minutes <= 59 * 24 * 60 else "1h"
 
-            df = yf.download(symbol, start=start_dt_utc - timedelta(minutes=5), end=end_dt_utc + timedelta(minutes=5), interval=interval, progress=False)
+            df = yf.download(symbol, start=start_dt - timedelta(minutes=5), end=end_dt + timedelta(minutes=5), interval=interval, progress=False)
             if df.empty:
                 raise ValueError("Veri yok")
 
-            df.index = pd.to_datetime(df.index).tz_localize(None)
-            df = df.tz_localize("UTC") if df.index.tz is None else df.tz_convert("UTC")
+            df.index = pd.to_datetime(df.index)
+            if df.index.tz is None:
+                df.index = df.index.tz_localize("UTC")
+            else:
+                df.index = df.index.tz_convert("UTC")
 
-            start_idx = df.index.get_indexer([pd.Timestamp(start_dt_utc)], method="nearest")[0]
-            end_idx = df.index.get_indexer([pd.Timestamp(end_dt_utc)], method="nearest")[0]
+            start_idx = df.index.get_indexer([pd.Timestamp(start_dt)], method="nearest")[0]
+            end_idx = df.index.get_indexer([pd.Timestamp(end_dt)], method="nearest")[0]
 
             open_price = float(df.iloc[start_idx]["Close"])
             close_price = float(df.iloc[end_idx]["Close"])
@@ -100,20 +111,13 @@ def run_simulation():
             results.append((symbol, pct_change, pct_change_tl, weighted))
         except Exception as e:
             results.append((symbol, "HATA", "-", 0))
+            st.warning(f"⚠️ {symbol} için hata: {e}")
 
     total_contribution_tl = total_contribution_usd + usd_tl_change
 
-    df_results = pd.DataFrame(results, columns=["Hisse", "% Değişim USD", "% Değişim TL", "Portföy Katkısı"])
-    st.dataframe(df_results.set_index("Hisse"))
-    st.markdown(f"""
-    ### 📈 Toplam AFT Fon Değişimi
-    - **USD**: `{total_contribution_usd:.2f}%`
-    - **TL**: `{total_contribution_tl:.2f}%`
-    """)
+    st.subheader("📋 Hisse Performansları")
+    df_result = pd.DataFrame(results, columns=["Hisse", "% Değişim USD", "% Değişim TL", "Portföy Katkısı"])
+    df_result = df_result.round(2)
+    st.dataframe(df_result.set_index("Hisse"))
 
-    csv_buffer = io.StringIO()
-    df_results.to_csv(csv_buffer, index=False)
-    st.download_button("📥 CSV İndir", data=csv_buffer.getvalue(), file_name="aft_fon_sonuclari.csv", mime="text/csv")
-
-if st.button("Simülasyonu Başlat"):
-    run_simulation()
+    st.success(f"📈 Toplam AFT Fon Değişimi: {total_contribution_usd:.2f}% (USD), {total_contribution_tl:.2f}% (TL)")
